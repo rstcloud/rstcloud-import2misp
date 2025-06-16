@@ -1,5 +1,3 @@
-pymisp
-clint
 rstapi
 pymisp
 urllib3

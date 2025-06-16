@@ -1,80 +1,212 @@
-# rstcloud-import2misp
+# MISP Scripts to Integrate with RST Cloud
 
-The provided script facilitates the daily download of IoCs from RST Cloud and imports them into MISP for comprehensive analysis. Currently, only attributed to at least one threat IoCs are imported as the number of unique IoCs in the [feed](https://www.rstcloud.com/rst-threat-feed/) is about 250K each day.
+These scripts facilitate the integration of two RST Cloud products with MISP (Malware Information Sharing Platform):
 
-There are a couple of event merge strategies available and also a number of filtering options configurable to find the balance between the amount of data imported, MISP performance, and capacity of CTI team to consume data. This approach ensures that there is an abundance of valuable indicators and contextual information for each IoC, which are integrated into MISP as tags (including custom tags and common MISP taxonomies).
+- **RST Report Hub**: A daily feed of parsed public threat research, including blogs, articles, and PDF reports.
+- **RST Threat Feed**: A technical feed of enriched Indicators of Compromise (IoCs).
 
-By default a distinct event is created or updated for each threat name per year. This results in a comfortable number of events around 5000 events a year for threats like Akira, Azorult, Redline Stealer, Lockbit, Cobalt Strike, and others. However, the size of these events may be too big for some organisations as they accumulated over time. So, there are also options to split events related to certain threats by month or by day to have more events with a msaller amount of attributes associaed with them.
+For a trial, contact RST Cloud at [trial@rstcloud.net](mailto:trial@rstcloud.net) or visit [https://www.rstcloud.com/#free-trial](https://www.rstcloud.com/#free-trial).
 
-![RST Cloud attributes in MISP](/screenshot_attributes.png)
-![RST Cloud events in MISP](/screenshot.png)
+## RST Report Hub
 
-Use cron to configure the script to run daily from 1 am to 3 am UTC. Running the script more often will create a lot of duplicated attributes.
+The `rst_report_hub.py` script automates the daily download of threat reports from RST Report Hub into MISP. The RST Cloud engine collects and classifies blogs, articles, and PDF reports using a decision tree ML classifier to filter out irrelevant content. Only original research is aimed to be ingested, with duplicates excluded (e.g., rewritten articles on platforms like Dark Reading)  unless they provide additional findings (e.g., a Medium article with new IoCs).
 
-To trial, please, contact us at [trial@rstcloud.net](mailto:trial@rstcloud.net) or use the following link [https://www.rstcloud.com/#free-trial](https://www.rstcloud.com/#free-trial)
+Each report is analyzed to create a full STIX 2.1 graph with objects and relationships, which is then approximated into the MISP model, despite some degradation due to differences between STIX and MISP standards. Reports are created as separate MISP events, tagged appropriately and mapped to MISP galaxies where possible. Due to MISP's limited threat database and challenges with synonym mapping, some external names may not map perfectly without introducing noise. RST Cloud also can provide actors, campaigns, malware, and tools definitions as a separate Galaxy as a part of the **RST Threat Library** product.
+
+Articles are translated into English from various languages (e.g., Chinese, Russian, Korean, Italian) and include a summary, key facts, and main ideas, which are attached as event descriptions and notes. A PDF copy of each article is archived and uploaded to MISP. Relationships are stored as tags and comments, and potentially noisy extracted indicators (e.g., Cloudflare IPs or hashes of legitimate files like powershell.exe) are ingested with the `to_ids` flag set to `False` to prevent false positives in detection systems.
+
+![RST Report Hub events in MISP](/screenshot_report_overview.png)
+![RST Report Hub attributes in MISP](/screenshot_report_attributes.png)
+
+The script supports updating existing reports if corrections or additional IoCs are available, controlled by configuration settings. The API key allows for retrieving updated reports and accessing historical data as needed.
+
+## RST Threat Feed
+
+The `rst_threat_feed.py` script downloads IoCs from RST Threat Feed and imports them into MISP for analysis. Currently, only IoCs attributed to at least one threat are imported, as the feed contains approximately 250,000 unique IoCs daily. Importing all indicators is possible but may impact MISP performance in average deployments, so testing is recommended. Scoring guidance:
+
+- **Score > 45**: Clients find suitable for threat detection.
+- **Score > 55**: Clients find suitable for threat prevention.
+- **Score 0–20**: Higher false positive risk, ok for threat hunting. See FP tags with descriptions
+
+The script offers multiple event merge strategies and filtering options to balance data volume, MISP performance, and the capacity of your CTI team. By default, a distinct MISP event is created or updated for each threat name per month, resulting in approximately 50,000 events annually for threats like Akira, Azorult, Redline Stealer, Lockbit, Cobalt Strike, etc. Events can also be split by day for more granularity or merged by year or by threat for fewer, larger events.
+
+Splitting by month also makes it easier to observe how malware infrastructure changes over time, using MISP correlation functions and the number of indicators (in this case, attributes in events,  which is a basic and somewhat naive but still useful method).
+
+There are many unattributed indicators for categories such as scan, sshprobe, webattack, etc. These are not covered by this script. RST Cloud provides special APIs for native integration with WAFs and firewalls to block these types of noisy, incoming attacks, as detecting them can generate thousands of alerts that no one would realistically have time to triage. If you still want to have these ingested into MISP, feel free to reach out to us. We can provide an updated script tailored to your use case.
+
+![RST Threat Feed attributes in MISP](/screenshot_attributes.png)
+![RST Threat Feed events in MISP](/screenshot.png)
+
+Schedule the script to run daily via cron between 1 AM and 3 AM UTC.
 
 ## Configuration
 
-### Minimal
+### Minimal Configuration
 
----
+To get started, configure the following variables in the respective configuration files (`config.py` for RST Threat Feed and `config_rh.py` for RST Report Hub):
 
-Obtain a key and populate the following variables in the file named config.py:
+#### RST Threat Feed (`config.py`)
 
-```code=python
-rst_api_key = 'a key received from RST Cloud'
-misp_url = 'https://127.0.0.1/'
-misp_key = 'a key generated in MISP'
+```python
+rst_api_key = 'your_rst_cloud_api_key'  # Obtain from RST Cloud
+misp_url = 'https://your_misp_server/'  # URL of your MISP server
+misp_key = 'your_misp_auth_key'  # Generated in MISP under http://[your_misp]/auth_keys/index
 ```
 
-Have a look at the _import_filter_ in the file _config.py_. It allows to set a minimum score for each type of indicators to be pushed into MISP and also the minimum score required to be identified as actionable (to_ids=true)
+#### RST Report Hub (`config_rh.py`)
 
-Please choose a strategy how MISP events are filtered:
+```python
+rst_api_url = "https://api.rstcloud.net/v1/"  # Default RST Cloud API URL
+rst_api_key = 'your_rst_cloud_api_key'  # Obtain from RST Cloud
+misp_url = 'https://your_misp_server/'  # URL of your MISP server
+misp_key = 'your_misp_auth_key'  # Generated in MISP under http://[your_misp]/auth_keys/index
+```
 
-1. filter_strategy="all"
-   - all indicators are imported that match the import filter threshold for each indicator type
-2. filter_strategy="recent"
-   - default option
-   - only recent indicators (updated within last 24 hours) are imported that match the import filter threshold for each indicator type
-3. filter_strategy="only_new"
-   - only new indicators (created within last 24 hours) are imported
+#### Choosing a Merge Strategy (RST Threat Feed)
 
-> Regardless of a strategy selected there is an additional filtering that is controlled via the advanced configuration options using that match the import filter thresholds for each indicator type (see **Advanced** section below)
+Select a `merge_strategy` in `config.py` to control how MISP events are created:
 
-Please choose a strategy how MISP events are to be created:
+1. **threat_by_year**: Groups indicators by threat name and year (~5,000 events/year, thousands of attributes per event). Recommended with `filter_strategy="recent"` to avoid duplicates.
+2. **threat_by_month** (default): Groups by threat name and month (~8,500 events/year, fewer attributes per event). Recommended with `filter_strategy="recent"` or `"only_new"`.
+3. **threat_by_day**: Groups by threat name and day (up to 365 events per threat annually). Recommended with `filter_strategy="recent"` or `"only_new"` to manage performance.
+4. **threat**: Groups by threat name only (fewer, larger events that grow over time). Recommended with `filter_strategy="recent"` or `"only_new"`.
 
-1. merge_strategy="threat_by_year"
-   - default option
-   - all indicators are grouped by a threat name and by year
-   - around 5000 events a year with thousands of indicators in each event
-   - we recommend using it alongside with filter_strategy="recent" to get updated indicators without deleting the old ones. This helps to keep the manual modifications made to the attributes while also receiving updates
-   - Attributes are often duplicated when using filter_strategy='all' because, when updating events, the attribute-level merge does not occur for objects due to MISP limitations
-2. merge_strategy="threat_by_month"
-   - all indicators are grouped by a threat name and by month in the given year
-   - up to 12 times more events, but less attributes per event
-   - we recommend using it alongside with filter_strategy="recent" or "only_new"
-3. merge_strategy="threat_by_day"
-   - all indicators are grouped by a threat name per day
-   - events are smaller but there are more of them (the worst case scenario is 365 events per each malware a year)
-   - MISP correlation function may be impacting query performance if filter_strategy="all" is selected
-   - we recommend using it alongside with filter_strategy="recent" or "only_new"
-4. merge_strategy="threat"
-   - all indicators are grouped just by a threat name
-   - events tend to become bigger and bigger over time
-   - we recommend using it alongside with filter_strategy="recent" or "only_new"
+```python
+merge_strategy = "threat_by_month"  # Choose from: threat_by_day, threat_by_month, threat_by_year, threat
+```
 
-### Advanced
+#### Choosing a Filter Strategy (RST Threat Feed)
 
----
+Select a `filter_strategy` in `config.py` to control which indicators are imported:
 
-Redefine import_filter variable to control what IoCs to import:
+1. **all**: Imports all indicators meeting the `import_filter` thresholds.
+2. **recent** (default): Imports indicators updated in the last 24 hours.
+3. **only_new**: Imports indicators created in the last 24 hours.
 
-- `indicator_types`: you can select from ip, domain, url, hash
-- `score`: what RST Cloud's total score for an indicator is considered a minimum required fro the indicator to be imported into MISP. You can set it for each individual indicator type
-- `setIDS`: what RST Cloud's total score for an indicator is considered a minimum required to be set with a flag IDS that usually is used in MISP for indicators you want to send for real-time detection or blocking
+```python
+filter_strategy = "recent"  # Choose from: all, recent, only_new
+```
 
-`publish = true` is used to automatically publish events. You will be getting info about hundreds of malware threats a day
+#### Choosing Import Filters (RST Threat Feed)
 
-MISP does not provide optimal storage options for certain types of contextual information, such as WHOIS data. Therefore, you can configure that these extra details are to be imported as text comments using the parameter `import_extra_data` = `True` or `False`.
+Configure the `import_filter` in `config.py` to set minimum scores for importing IoCs and enabling detection (`to_ids=True`):
 
-The script now supports mapping of TTP tags into MITRE taxonomy in MISP. It is done via the usage of MITRE ATT&CK json file from MISP project [mitre-attack-pattern.json](https://raw.githubusercontent.com/MISP/misp-galaxy/main/clusters/mitre-attack-pattern.json). To modify the path to that file, use the parameter: `path_to_mitre_json` = "mitre-attack-pattern.json"
+```python
+import_filter = {
+    "indicator_types": ["ip", "domain", "url", "hash"],  # Types of IoCs to import
+    "score": {"ip": 20, "domain": 20, "url": 20, "hash": 20},  # Minimum score to import
+    "setIDS": {"ip": 45, "domain": 45, "url": 45, "hash": 45},  # Minimum score for to_ids=True
+}
+```
+
+### Advanced Configuration
+
+#### RST Threat Feed (`config.py`)
+
+- **Distribution Level**: Set the MISP event distribution level (0: Your Organisation Only, 1: This Community Only, 2: Connected Communities, 3: All, 4: Sharing Group, 5: Inherit Event).
+
+```python
+distribution_level = 0  # Default: Your Organisation Only
+```
+
+- **Publish Events**: Automatically publish events to MISP.
+
+```python
+publish = True  # Set to False to disable auto-publishing
+```
+
+- **Import Extra Data**: Include additional contextual data (e.g., WHOIS, ASN, geo-location) as text comments.
+
+```python
+import_extra_data = True  # Set to False to exclude extra data
+```
+
+- **MITRE ATT&CK Mapping**: Specify the path to the MITRE ATT&CK JSON file for TTP mapping.
+
+```python
+path_to_mitre_json = "mitre-attack-pattern.json"
+```
+
+- **Logging**: Configure logging parameters.
+
+```python
+log_params = {
+    "level": "DEBUG",  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+    "filename": "misp_uploader.log",
+    "maxBytes": 1024 * 1024 * 10,  # 10 MB
+    "backupCount": 3,  # Number of backup log files
+}
+```
+
+#### RST Report Hub (`config_rh.py`)
+
+- **Update Events**: Control whether existing MISP events are updated with new report data.
+
+```python
+update_events = True  # Set to False to skip updating existing events
+```
+
+- **Exact Date**: Fetch reports only for the current day or allow updates to recent reports.
+
+```python
+exact_date = False  # Set to True to fetch only today's reports
+```
+
+- **Publish Events**: Automatically publish events to MISP.
+
+```python
+publish = True  # Set to False to disable auto-publishing
+```
+
+- **SSL Verification**: Enable or disable SSL certificate verification for MISP connections.
+
+```python
+misp_verifycert = False  # Set to True to enable SSL verification
+```
+
+- **Logging**: Configure logging parameters.
+
+```python
+log_params = {
+    "level": "DEBUG",  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+    "filename": "misp_rh_uploader.log",
+    "maxBytes": 1024 * 1024 * 10,  # 10 MB
+    "backupCount": 3,  # Number of backup log files
+}
+```
+
+#### Command-Line Arguments (RST Report Hub)
+
+The `rst_report_hub.py` script can be executed manually using command-line arguments:
+
+- `--start-date`: Specify the start date for downloading reports (format: `YYYYMMDD`).
+- `--misp-url`: Override the MISP URL from `config_rh.py`.
+- `--rst-url`: Override the RST API URL from `config_rh.py`.
+- `--galaxies_as_tags`: Convert MISP galaxies to tags (`True` or `False`).
+- `--update_events`: Override the `update_events` setting (`True` or `False`).
+- `--exact_date`: Override the `exact_date` setting (`True` or `False`).
+- `--custom_techniques`: Include custom techniques in STIX parsing (`True` or `False`).
+- `--keep_tactics`: Retain MITRE tactics (e.g., TAxxxx) in STIX parsing (`True` or `False`).
+- `-l/--loglevel`: Override the logging level (e.g., `DEBUG`, `INFO`).
+
+Example:
+
+```bash
+python rst_report_hub.py --start-date 20250101 --loglevel INFO --exact_date True
+```
+
+## Usage
+
+1. Install dependencies listed in the scripts (e.g., `pymisp`, `stix2`, `requests`, `clint`, `tldextract`).
+2. Configure `config.py` and `config_rh.py` with your API keys and MISP settings.
+3. Schedule the scripts to run daily using cron (e.g., 1 AM–3 AM UTC).
+4. Monitor logs (`misp_uploader.log` for Threat Feed, `misp_rh_uploader.log` for Report Hub) for errors or issues.
+
+## Notes
+
+- Ensure your MISP instance is properly configured to handle the volume of data, especially for the Threat Feed with large event sizes.
+- The RST Report Hub script transforms STIX 2.1 bundles into MISP events, with custom handling for threat actors, TTPs, and relationships to minimize data loss.
+- For performance optimization, test different merge and filter strategies for the Threat Feed based on your organization's needs.
+- The scripts include error handling and logging to facilitate troubleshooting.
+
+For further assistance, contact RST Cloud support at [support@rstcloud.net](mailto:support@rstcloud.net).
