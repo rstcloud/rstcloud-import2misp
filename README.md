@@ -1,5 +1,7 @@
 # MISP Scripts to Integrate with RST Cloud
 
+**This repository is archived.** The new integration is available at [https://github.com/rstcloud/rstcloud_misp]
+
 These scripts facilitate the integration of two RST Cloud products with MISP (Malware Information Sharing Platform):
 
 - **RST Report Hub**: A daily feed of parsed public threat research, including blogs, articles, and PDF reports.
